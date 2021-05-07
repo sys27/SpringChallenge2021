@@ -115,21 +115,22 @@ class Game
 
     public Action GetNextAction()
     {
-        if (opponentIsWaiting && myScore > opponentScore)
-            return new Action(Action.WAIT);
-        
-        if (trees.Count > 0)
-        {
-            var tree = trees
-                .Where(x => x.isMine)
-                .OrderByDescending(x => x.size)
-                .FirstOrDefault();
-            if (tree != null)
-                return new Action(Action.COMPLETE, tree.cellIndex);
-        }
+        var tree = trees
+            .Where(x => x.isMine && !x.isDormant)
+            .OrderByDescending(x => x.size)
+            .FirstOrDefault();
 
-        // TODO: write your algorithm here
-        return possibleActions.First();
+        if (tree == null)
+            return possibleActions.First();
+
+        return tree.size switch
+        {
+            3 => new Action(Action.COMPLETE, tree.cellIndex),
+            2 => new Action(Action.GROW, tree.cellIndex),
+            1 => new Action(Action.GROW, tree.cellIndex),
+            0 => new Action(Action.GROW, tree.cellIndex),
+            _ => new Action(Action.WAIT),
+        };
     }
 }
 
