@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 class Cell
 {
@@ -113,24 +114,89 @@ class Game
         trees = new List<Tree>();
     }
 
-    public Action GetNextAction()
+    private Tree[] GetMyTrees(int size)
+        => trees.Where(x => x.isMine && x.size == size).ToArray();
+
+    private int GetGrowCost(Tree tree)
     {
-        var tree = trees
-            .Where(x => x.isMine && !x.isDormant)
-            .OrderByDescending(x => x.size)
-            .FirstOrDefault();
-
-        if (tree == null)
-            return possibleActions.First();
-
         return tree.size switch
         {
-            3 => new Action(Action.COMPLETE, tree.cellIndex),
-            2 => new Action(Action.GROW, tree.cellIndex),
-            1 => new Action(Action.GROW, tree.cellIndex),
-            0 => new Action(Action.GROW, tree.cellIndex),
-            _ => new Action(Action.WAIT),
+            2 => 7 + GetMyTrees(3).Length,
+            1 => 3 + GetMyTrees(2).Length,
+            0 => 1 + GetMyTrees(1).Length,
+            _ => throw new Exception(),
         };
+    }
+
+    private int CompleteCost() => 4;
+
+    private int GetSeedCost() => GetMyTrees(0).Length;
+
+    public Action GetNextAction()
+    {
+        const int DAYS = 23;
+
+        if (day == DAYS)
+        {
+            var largeTree = GetMyTrees(3).FirstOrDefault();
+            if (largeTree != null)
+                return new Action(Action.COMPLETE, largeTree.cellIndex);
+        }
+
+        var canGrow = false;
+
+        for (var size = 3; size >= 1; size--)
+        {
+            // TODO: order by richness?
+            var myTrees = GetMyTrees(size).ToArray();
+            if (myTrees.Length > 1)
+                continue;
+
+            var lowerLevelTrees = GetMyTrees(size - 1).ToArray();
+            if (lowerLevelTrees.Length == 0)
+                continue;
+
+            var growCandidate = lowerLevelTrees[0];
+            var growCost = GetGrowCost(growCandidate);
+            if (growCost > mySun)
+            {
+                canGrow = true;
+                continue;
+            }
+
+            return new Action(Action.GROW, growCandidate.cellIndex);
+        }
+
+        var seeds = GetMyTrees(0).ToArray();
+        if (seeds.Length > 0)
+        {
+            var myTrees = GetMyTrees(3).ToArray();
+            if (myTrees.Length > 0)
+            {
+                var tree = myTrees[0];
+
+                return new Action(Action.COMPLETE, tree.cellIndex);
+            }
+        }
+
+        if (!canGrow)
+        {
+            var seedCost = GetSeedCost();
+            if (seedCost <= mySun)
+            {
+                var cells = board.ToDictionary(x => x.index);
+
+                var candidate = possibleActions
+                    .Where(x => x.type == Action.SEED)
+                    .OrderByDescending(x => cells[x.targetCellIdx].richness)
+                    .FirstOrDefault();
+
+                if (candidate != null)
+                    return new Action(Action.SEED, candidate.sourceCellIdx, candidate.targetCellIdx);
+            }
+        }
+
+        return new Action(Action.WAIT);
     }
 }
 
@@ -157,6 +223,11 @@ class Player
             int[] neighs = new int[] { neigh0, neigh1, neigh2, neigh3, neigh4, neigh5 };
             Cell cell = new Cell(index, richness, neighs);
             game.board.Add(cell);
+
+            // Console.Error.WriteLine($"Parent: {index}");
+            // foreach (var neigh in neighs)
+            //     Console.Error.WriteLine(neigh);
+            // Console.Error.WriteLine();
         }
 
         // game loop
