@@ -45,7 +45,7 @@ class Action
 
     public static Action Parse(string action)
     {
-        string[] parts = action.Split(" ");
+        var parts = action.Split(" ");
         switch (parts[0])
         {
             case WAIT:
@@ -100,22 +100,22 @@ class Game
 {
     public int day;
     public int nutrients;
-    public List<Cell> board;
+    public Dictionary<int, Cell> board;
     public List<Action> possibleActions;
-    public List<Tree> trees;
+    public Dictionary<int, Tree> trees;
     public int mySun, opponentSun;
     public int myScore, opponentScore;
     public bool opponentIsWaiting;
 
     public Game()
     {
-        board = new List<Cell>();
+        board = new Dictionary<int, Cell>();
         possibleActions = new List<Action>();
-        trees = new List<Tree>();
+        trees = new Dictionary<int, Tree>();
     }
 
     private Tree[] GetMyTrees(int size)
-        => trees.Where(x => x.isMine && x.size == size).ToArray();
+        => trees.Values.Where(x => x.isMine && x.size == size).ToArray();
 
     private int GetGrowCost(Tree tree)
     {
@@ -128,75 +128,118 @@ class Game
         };
     }
 
-    private int CompleteCost() => 4;
-
     private int GetSeedCost() => GetMyTrees(0).Length;
+
+    private int CompleteCost = 4;
+
+    private int MapRichness(int richness)
+        => richness switch
+        {
+            3 => 4,
+            2 => 2,
+            _ => 0,
+        };
+
+    private int GetSun()
+        => trees.Values
+            .Where(x => x.isMine)
+            .Sum(x => x.size);
+
+    private (double score, double sun) ActionScore(Action action)
+    {
+        return action.type switch
+        {
+            Action.SEED => SeedScore(action),
+            Action.GROW => GrowScore(action),
+            Action.COMPLETE => CompleteScore(action),
+            Action.WAIT => WaitScore(),
+        };
+    }
+
+    private (double score, double sun) SeedScore(Action action)
+    {
+        var dayIndex = day < 1 ? 5.0 : 7.0 / day;
+        var cell = board[action.targetCellIdx];
+        var seedCost = GetSeedCost();
+
+        if (mySun < seedCost)
+            return (double.MinValue, double.MinValue);
+
+        var score = MapRichness(cell.richness) * dayIndex;
+        var sun = GetSun() - seedCost;
+
+        return (score, sun);
+    }
+
+    private (double score, double sun) GrowScore(Action action)
+    {
+        var dayIndex = day >= 1 && day < 21 ? 5.0 : 1.0;
+        var tree = trees[action.targetCellIdx];
+        var growCost = GetGrowCost(tree);
+
+        if (mySun < growCost)
+            return (double.MinValue, double.MinValue);
+
+        var score = 1 * (tree.size + 1) * dayIndex;
+        var sun = GetSun() - growCost + 1;
+
+        return (score, sun);
+    }
+
+    private (double score, double sun) CompleteScore(Action action)
+    {
+        var dayIndex = day >= 21 ? 5.0 : day * 1.0 / 33;
+
+        if (mySun < CompleteCost)
+            return (double.MinValue, double.MinValue);
+
+        var score = (nutrients + MapRichness(board[action.targetCellIdx].richness)) * dayIndex;
+        var sun = GetSun() - 3;
+
+        return (score, sun);
+    }
+
+    private (double score, double sun) WaitScore()
+    {
+        var dayIndex = day >= 21 ? 0.5 : 1.0;
+
+        var sun = GetSun();
+        var score = (sun / 3.0) * dayIndex;
+
+        return (score, sun);
+    }
+
+    private double TotalScore((double score, double sun) tuple)
+    {
+        var (score, sun) = tuple;
+
+        return score + (sun * 0.3);
+    }
 
     public Action GetNextAction()
     {
-        const int DAYS = 23;
+        // var move = possibleActions
+        //     .OrderByDescending(x => TotalScore(ActionScore(x)))
+        //     .First();
 
-        if (day == DAYS)
+        var move = default(Action);
+        var moveScore = double.MinValue;
+
+        foreach (var action in possibleActions)
         {
-            var largeTree = GetMyTrees(3).FirstOrDefault();
-            if (largeTree != null)
-                return new Action(Action.COMPLETE, largeTree.cellIndex);
-        }
+            var score = ActionScore(action);
+            var total = TotalScore(score);
 
-        var canGrow = false;
-
-        for (var size = 3; size >= 1; size--)
-        {
-            // TODO: order by richness?
-            var myTrees = GetMyTrees(size).ToArray();
-            if (myTrees.Length > 1)
-                continue;
-
-            var lowerLevelTrees = GetMyTrees(size - 1).ToArray();
-            if (lowerLevelTrees.Length == 0)
-                continue;
-
-            var growCandidate = lowerLevelTrees[0];
-            var growCost = GetGrowCost(growCandidate);
-            if (growCost > mySun)
+            if (moveScore < total)
             {
-                canGrow = true;
-                continue;
+                move = action;
+                moveScore = total;
             }
 
-            return new Action(Action.GROW, growCandidate.cellIndex);
+            Console.Error.WriteLine($"Action: {action}, Score: {score}, Total: {total}");
         }
 
-        var seeds = GetMyTrees(0).ToArray();
-        if (seeds.Length > 0)
-        {
-            var myTrees = GetMyTrees(3).ToArray();
-            if (myTrees.Length > 0)
-            {
-                var tree = myTrees[0];
-
-                return new Action(Action.COMPLETE, tree.cellIndex);
-            }
-        }
-
-        if (!canGrow)
-        {
-            var seedCost = GetSeedCost();
-            if (seedCost <= mySun)
-            {
-                var cells = board.ToDictionary(x => x.index);
-
-                var candidate = possibleActions
-                    .Where(x => x.type == Action.SEED)
-                    .OrderByDescending(x => cells[x.targetCellIdx].richness)
-                    .FirstOrDefault();
-
-                if (candidate != null)
-                    return new Action(Action.SEED, candidate.sourceCellIdx, candidate.targetCellIdx);
-            }
-        }
-
-        return new Action(Action.WAIT);
+        return move;
     }
 }
 
@@ -222,7 +265,7 @@ class Player
             int neigh5 = int.Parse(inputs[7]);
             int[] neighs = new int[] { neigh0, neigh1, neigh2, neigh3, neigh4, neigh5 };
             Cell cell = new Cell(index, richness, neighs);
-            game.board.Add(cell);
+            game.board.Add(index, cell);
 
             // Console.Error.WriteLine($"Parent: {index}");
             // foreach (var neigh in neighs)
@@ -253,7 +296,7 @@ class Player
                 bool isMine = inputs[2] != "0"; // 1 if this is your tree
                 bool isDormant = inputs[3] != "0"; // 1 if this tree is dormant
                 Tree tree = new Tree(cellIndex, size, isMine, isDormant);
-                game.trees.Add(tree);
+                game.trees.Add(cellIndex, tree);
             }
 
             game.possibleActions.Clear();
